@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { fetchPlayers, fetchMatches } from "../services/api";
-import TeamLogo from "../components/TeamLogo";
 import PlayerAvatar from "../components/PlayerAvatar";
 import RoleBadge from "../components/RoleBadge";
 
 const ROLES = ["All", "WK", "BAT", "AR", "BOWL"];
 
-export default function PlayerPoolPage() {
+export default function ModifyPage() {
   const { matchId } = useParams();
   const navigate = useNavigate();
   const [players, setPlayers] = useState([]);
@@ -17,8 +16,23 @@ export default function PlayerPoolPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(`selected_${matchId}`);
-    if (saved) setSelected(JSON.parse(saved));
+    const savedResult = sessionStorage.getItem(`result_${matchId}`);
+    if (savedResult) {
+      const result = JSON.parse(savedResult);
+      setSelected(
+        result.best_xi.map((p) => ({
+          player_id: p.player_id,
+          name: p.name,
+          team: p.team,
+          role: p.role,
+          credits: p.credits,
+          image_url: p.image_url,
+          career_avg_fp: p.career_avg_fp,
+          last_5_avg_fp: p.last_5_avg_fp,
+          last_match_fp: p.last_match_fp,
+        }))
+      );
+    }
 
     Promise.all([fetchPlayers(matchId), fetchMatches()])
       .then(([pl, ms]) => {
@@ -31,24 +45,56 @@ export default function PlayerPoolPage() {
   const shown =
     filter === "All" ? players : players.filter((p) => p.role === filter);
   const credits = selected.reduce((s, p) => s + p.credits, 0);
+  const isSelected = (p) => selected.some((s) => s.player_id === p.player_id);
 
   const toggle = (player) => {
     setSelected((prev) => {
       const exists = prev.find((p) => p.player_id === player.player_id);
-      const next = exists
-        ? prev.filter((p) => p.player_id !== player.player_id)
-        : prev.length < 11
-        ? [...prev, player]
-        : prev;
-      sessionStorage.setItem(`selected_${matchId}`, JSON.stringify(next));
-      return next;
+      if (exists) return prev.filter((p) => p.player_id !== player.player_id);
+      if (prev.length >= 11) return prev;
+      return [...prev, player];
     });
   };
 
-  const isSelected = (p) => selected.some((s) => s.player_id === p.player_id);
+  const applyModification = () => {
+    const savedResult = sessionStorage.getItem(`result_${matchId}`);
+    if (savedResult) {
+      const result = JSON.parse(savedResult);
+      const sorted = [...selected].sort((a, b) => {
+        const order = { WK: 0, BAT: 1, AR: 2, BOWL: 3 };
+        return order[a.role] - order[b.role];
+      });
+      const captain = sorted.reduce(
+        (max, p) => (p.career_avg_fp > max.career_avg_fp ? p : max),
+        sorted[0]
+      );
+      const viceCaptain = sorted
+        .filter((p) => p.player_id !== captain.player_id)
+        .reduce(
+          (max, p) => (p.career_avg_fp > max.career_avg_fp ? p : max),
+          sorted[0]
+        );
 
-  const team1Count = selected.filter((p) => p.team === match?.team1).length;
-  const team2Count = selected.filter((p) => p.team === match?.team2).length;
+      const newBestXI = sorted.map((p) => ({
+        ...p,
+        pred_fp: p.career_avg_fp,
+        captain: p.player_id === captain.player_id,
+        vice_captain: p.player_id === viceCaptain.player_id,
+      }));
+
+      const newResult = {
+        ...result,
+        best_xi: newBestXI,
+        total_credits: credits,
+        total_pred_fp: newBestXI
+          .reduce((s, p) => s + p.career_avg_fp, 0)
+          .toFixed(1),
+      };
+
+      sessionStorage.setItem(`result_${matchId}`, JSON.stringify(newResult));
+    }
+    navigate(`/result/${matchId}`);
+  };
 
   return (
     <div
@@ -69,7 +115,7 @@ export default function PlayerPoolPage() {
           }}
         >
           <button
-            onClick={() => navigate("/")}
+            onClick={() => navigate(-1)}
             style={{
               background: "transparent",
               border: "none",
@@ -81,16 +127,10 @@ export default function PlayerPoolPage() {
           </button>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: "15px", fontWeight: "600", color: "#fff" }}>
-              {match ? `${match.team1} vs ${match.team2}` : "Loading..."}
+              Modify Team
             </div>
-            <div
-              style={{
-                fontSize: "11px",
-                color: "rgba(255,255,255,0.55)",
-                marginTop: "1px",
-              }}
-            >
-              {match?.match_num} · {match?.venue?.split(",")[0]}
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.55)" }}>
+              {match?.team1} vs {match?.team2}
             </div>
           </div>
           <div
@@ -113,14 +153,13 @@ export default function PlayerPoolPage() {
           </div>
         </div>
 
-        {/* progress bar */}
+        {/* selected count bar */}
         <div
           style={{
             background: "rgba(255,255,255,0.1)",
             borderRadius: "4px",
             height: "4px",
             overflow: "hidden",
-            marginBottom: "10px",
           }}
         >
           <div
@@ -133,45 +172,9 @@ export default function PlayerPoolPage() {
             }}
           />
         </div>
-
-        {/* team filter tabs */}
-        <div
-          style={{
-            display: "flex",
-            gap: "0",
-            background: "rgba(255,255,255,0.1)",
-            borderRadius: "8px",
-            padding: "2px",
-          }}
-        >
-          {match &&
-            [
-              `MI (${selected.filter((p) => p.team === match.team1).length})`,
-              "All Players",
-              `${match.team2} (${
-                selected.filter((p) => p.team === match.team2).length
-              })`,
-            ].map((label, i) => (
-              <button
-                key={i}
-                style={{
-                  flex: 1,
-                  padding: "6px 4px",
-                  border: "none",
-                  borderRadius: "6px",
-                  fontSize: "11px",
-                  fontWeight: "500",
-                  background: i === 1 ? "transparent" : "transparent",
-                  color: "rgba(255,255,255,0.7)",
-                }}
-              >
-                {label}
-              </button>
-            ))}
-        </div>
       </div>
 
-      {/* player count + selected */}
+      {/* info bar */}
       <div
         style={{
           background: "#fff",
@@ -182,33 +185,20 @@ export default function PlayerPoolPage() {
           justifyContent: "space-between",
         }}
       >
-        <div style={{ display: "flex", gap: "16px" }}>
-          <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-            Players:{" "}
-            <strong style={{ color: "var(--text-primary)" }}>
-              {selected.length}/11
-            </strong>
-          </div>
-          {match && (
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-              {match.team1}: <strong>{team1Count}</strong> &nbsp;
-              {match.team2}: <strong>{team2Count}</strong>
-            </div>
-          )}
+        <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+          {selected.length}/11 players · {credits.toFixed(1)} credits
         </div>
-        <div style={{ fontSize: "11px", color: "#ef4444", fontWeight: "500" }}>
-          Max 7 from a team
+        <div style={{ fontSize: "11px", color: "#f5a623", fontWeight: "600" }}>
+          Pre-filled from ML prediction
         </div>
       </div>
 
-      {/* role filters */}
+      {/* role tabs */}
       <div
         style={{
           background: "#fff",
           borderBottom: "1px solid var(--border)",
-          padding: "0 16px",
           display: "flex",
-          gap: "0",
           overflowX: "auto",
         }}
       >
@@ -226,17 +216,14 @@ export default function PlayerPoolPage() {
               borderBottom:
                 filter === r ? "2px solid #1a73e8" : "2px solid transparent",
               whiteSpace: "nowrap",
-              transition: ".15s",
             }}
           >
-            {r === "All"
-              ? `All (${players.length})`
-              : `${r} (${players.filter((p) => p.role === r).length})`}
+            {r === "All" ? `All` : r}
           </button>
         ))}
       </div>
 
-      {/* players list */}
+      {/* players */}
       <div style={{ padding: "8px 12px" }}>
         {loading && (
           <div
@@ -249,90 +236,60 @@ export default function PlayerPoolPage() {
             Loading players...
           </div>
         )}
-
         {shown.map((player) => {
           const sel = isSelected(player);
-          const t1full = selected.filter((p) => p.team === match?.team1).length;
-          const t2full = selected.filter((p) => p.team === match?.team2).length;
-          const teamFull =
-            (player.team === match?.team1 && t1full >= 7) ||
-            (player.team === match?.team2 && t2full >= 7);
-          const disabled =
-            !sel &&
-            (selected.length >= 11 ||
-              teamFull ||
-              credits + player.credits > 100);
-
+          const disabled = !sel && selected.length >= 11;
           return (
             <div
               key={player.player_id}
               onClick={() => !disabled && toggle(player)}
               style={{
                 background: "#fff",
-                border: `1px solid ${sel ? "#22c55e" : "var(--border)"}`,
+                border: `1px solid ${sel ? "#f5a623" : "var(--border)"}`,
                 borderRadius: "10px",
                 marginBottom: "8px",
                 padding: "10px 12px",
                 display: "flex",
                 alignItems: "center",
                 gap: "10px",
-                opacity: disabled ? 0.5 : 1,
+                opacity: disabled ? 0.4 : 1,
                 cursor: disabled ? "not-allowed" : "pointer",
-                transition: ".15s",
                 boxShadow: sel
-                  ? "0 0 0 1px #22c55e"
+                  ? "0 0 0 1px #f5a623"
                   : "0 1px 3px rgba(0,0,0,0.05)",
               }}
             >
               <PlayerAvatar
                 name={player.name}
                 imageUrl={player.image_url}
-                size={44}
+                size={42}
               />
-
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: 1 }}>
                 <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    marginBottom: "3px",
-                  }}
+                  style={{ display: "flex", alignItems: "center", gap: "6px" }}
                 >
-                  <span
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: "600",
-                      color: "var(--text-primary)",
-                    }}
-                  >
+                  <span style={{ fontSize: "13px", fontWeight: "600" }}>
                     {player.name}
                   </span>
-                  {player.role === "BOWL" && player.credits >= 9.5 && (
+                  {sel && (
                     <span
                       style={{
                         fontSize: "9px",
-                        background: "#fee2e2",
-                        color: "#b91c1c",
+                        background: "#fef3c7",
+                        color: "#b45309",
                         padding: "1px 5px",
-                        borderRadius: "4px",
+                        borderRadius: "3px",
                         fontWeight: "600",
                       }}
                     >
-                      STAR
+                      SELECTED
                     </span>
                   )}
                 </div>
-                <div
-                  style={{ display: "flex", gap: "6px", alignItems: "center" }}
-                >
+                <div style={{ display: "flex", gap: "6px", marginTop: "3px" }}>
                   <RoleBadge role={player.role} small />
                   <span
-                    style={{
-                      fontSize: "11px",
-                      color: "var(--text-secondary)",
-                      fontWeight: "500",
-                    }}
+                    style={{ fontSize: "11px", color: "var(--text-secondary)" }}
                   >
                     {player.team}
                   </span>
@@ -341,65 +298,41 @@ export default function PlayerPoolPage() {
                   style={{
                     display: "flex",
                     gap: "12px",
-                    marginTop: "4px",
+                    marginTop: "3px",
                     fontSize: "11px",
                     color: "var(--text-light)",
                   }}
                 >
                   <span>
-                    Avg FP:{" "}
-                    <strong style={{ color: "var(--text-secondary)" }}>
-                      {player.career_avg_fp}
-                    </strong>
+                    Avg: <strong>{player.career_avg_fp}</strong>
                   </span>
                   <span>
-                    Last 5:{" "}
-                    <strong style={{ color: "var(--text-secondary)" }}>
-                      {player.last_5_avg_fp}
-                    </strong>
-                  </span>
-                  <span>
-                    Last:{" "}
-                    <strong style={{ color: "var(--text-secondary)" }}>
-                      {player.last_match_fp}
-                    </strong>
+                    Last: <strong>{player.last_match_fp}</strong>
                   </span>
                 </div>
               </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: "6px",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: "700",
-                    color: "var(--text-primary)",
-                  }}
-                >
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "14px", fontWeight: "700" }}>
                   {player.credits}
                 </div>
                 <div style={{ fontSize: "9px", color: "var(--text-light)" }}>
-                  Credits
+                  credits
                 </div>
                 <div
                   style={{
-                    width: "26px",
-                    height: "26px",
+                    width: "24px",
+                    height: "24px",
                     borderRadius: "50%",
-                    background: sel ? "#22c55e" : "#f1f5f9",
-                    border: `2px solid ${sel ? "#22c55e" : "#d1d5db"}`,
+                    background: sel ? "#f5a623" : "#f1f5f9",
+                    border: `2px solid ${sel ? "#f5a623" : "#d1d5db"}`,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     color: sel ? "#fff" : "var(--text-light)",
-                    fontSize: "14px",
+                    fontSize: "13px",
                     fontWeight: "700",
+                    marginTop: "4px",
+                    marginLeft: "auto",
                   }}
                 >
                   {sel ? "✓" : "+"}
@@ -410,7 +343,7 @@ export default function PlayerPoolPage() {
         })}
       </div>
 
-      {/* bottom predict bar */}
+      {/* bottom bar */}
       <div
         style={{
           position: "fixed",
@@ -433,42 +366,39 @@ export default function PlayerPoolPage() {
             marginBottom: "8px",
           }}
         >
-          <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-            {selected.length}/11 players · {credits.toFixed(1)} credits used
-          </div>
-          <div
+          <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+            {selected.length}/11 · {credits.toFixed(1)} cr used
+          </span>
+          <span
             style={{
               fontSize: "12px",
-              color: credits > 100 ? "#ef4444" : "var(--success)",
+              color: credits > 100 ? "#ef4444" : "#22c55e",
               fontWeight: "500",
             }}
           >
             {(100 - credits).toFixed(1)} left
-          </div>
+          </span>
         </div>
         <button
-          onClick={() => navigate(`/loading/${matchId}`)}
-          disabled={selected.length < 4}
+          onClick={applyModification}
+          disabled={selected.length !== 11}
           style={{
             width: "100%",
             padding: "13px",
             background:
-              selected.length < 4
+              selected.length !== 11
                 ? "#d1d5db"
-                : "linear-gradient(135deg,#22c55e,#16a34a)",
+                : "linear-gradient(135deg,#f5a623,#e8941a)",
             color: "#fff",
             border: "none",
             borderRadius: "10px",
             fontSize: "14px",
             fontWeight: "700",
-            letterSpacing: "0.02em",
-            boxShadow:
-              selected.length >= 4 ? "0 4px 12px rgba(34,197,94,0.35)" : "none",
           }}
         >
-          {selected.length < 4
-            ? `Select ${4 - selected.length} more players`
-            : "Predict Best XI →"}
+          {selected.length !== 11
+            ? `Select ${11 - selected.length} more`
+            : "Apply Changes & View Team →"}
         </button>
       </div>
     </div>
