@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+env/
+*.egg-info/
+
+# Model file (too large for git)
+ml_service/model/*.pkl
+
+# Database (don't push local db)
+ml_service/database/*.db
+
+# Node
+node_modules/
+npm-debug.log
+
+# React build
+frontend/dist/
+
+# OS
+.DS_Store
+.vscode/
+*.swp
